@@ -4,6 +4,7 @@
 
 pub mod core;
 pub mod counters;
+pub mod sets;
 
 pub use core::{ActorID, Crdt};
 pub use counters::GCounter;
