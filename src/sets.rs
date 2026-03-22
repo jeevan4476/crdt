@@ -130,6 +130,100 @@ impl<T:Clone+Eq+Hash>Crdt for TwoPSet<T>{
         }
     }
 }
+
+/// OR-Set: Observed-Remove Set
+///
+/// The most sophisticated Set CRDT with clean, intuitive semantics.
+///
+/// **Key properties:**
+/// - Elements can be added and removed multiple times
+/// - Concurrent add/remove: **Add wins** (most intuitive)
+/// - Uses unique tags to track individual add operations
+///
+/// **How it works:**
+/// - Each `add(e)` creates a unique (element, tag) pair
+/// - `remove(e)` removes only the tags observed at source
+/// - Concurrent add creates new tag not observed by remove
+#[derive(Clone,Debug)]
+pub struct ORSet<T:Clone+Eq+Hash>{
+    elements: HashSet<(T,u64)>,
+    next_uid: u64
+}
+
+impl<T: Clone + Eq + Hash> PartialEq for ORSet<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.elements == other.elements
+    }
+}
+
+impl<T: Clone + Eq + Hash> Eq for ORSet<T> {}
+
+impl<T:Clone+Eq+Hash> ORSet<T>{
+    pub fn new()->Self{
+        ORSet { elements: HashSet::new(), next_uid: 0 }
+    }
+
+    pub fn add(&mut self,element:T){
+        let uid = self.generate_uid();
+        self.elements.insert((element,uid));
+    }
+
+    /// Remove an element
+    ///
+    /// Removes all (element, tag) pairs for this element that are
+    /// currently in the set. Concurrent adds with different tags
+    /// will survive (add wins).
+    pub fn remove(&mut self,element:&T){
+        let to_remove : Vec<_>= self.elements.iter().filter(|(e,_)| e == element ).cloned().collect();
+        for pair in to_remove{
+            self.elements.remove(&pair);
+        }
+    }
+
+    pub fn contains(&self,element:&T)->bool{
+        self.elements.iter().any(|(e,_)| e==element)
+    }
+
+    pub fn elements(&self)->Vec<T>{
+        let mut unique: HashSet<T>=HashSet::new();
+        for(element,_) in &self.elements{
+            unique.insert(element.clone());
+        }
+        unique.into_iter().collect()
+    }
+    pub fn len(&self) -> usize {
+        self.elements().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.elements.is_empty()
+    }
+    /// Generate a unique ID
+    ///
+    /// In a real implementation, this should be globally unique
+    /// (e.g., timestamp + actor_id). For simplicity, we use a counter.
+    fn generate_uid(&mut self)->u64{
+        let uid = self.next_uid;
+        self.next_uid+=1;
+        uid
+    }
+}
+
+impl<T:Clone+Eq+Hash> Default for ORSet<T>{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T:Clone+Eq+Hash> Crdt for ORSet<T>{
+    fn merge(&mut self, other: &Self) {
+        for pair in &other.elements{
+            self.elements.insert(pair.clone());
+        }
+        self.next_uid = self.next_uid.max(other.next_uid);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,5 +346,150 @@ mod twop_tests {
         assert!(s1.contains(&"alice"));
         assert!(s1.contains(&"bob"));
         assert!(!s1.contains(&"charlie"));
+    }
+}
+
+
+#[cfg(test)]
+mod or_tests {
+    use super::*;
+
+    #[test]
+    fn test_orset_add_remove() {
+        let mut set = ORSet::new();
+        
+        set.add("alice");
+        assert!(set.contains(&"alice"));
+        
+        set.remove(&"alice");
+        assert!(!set.contains(&"alice"));
+    }
+
+    #[test]
+    fn test_orset_can_readd() {
+        let mut set = ORSet::new();
+        
+        set.add("alice");
+        set.remove(&"alice");
+        set.add("alice");  // Can re-add! ✅
+        
+        assert!(set.contains(&"alice"));
+    }
+
+    #[test]
+    fn test_orset_concurrent_add_wins() {
+        let mut s1 = ORSet::new();
+        let mut s2 = ORSet::new();
+
+        // Both add "alice" (different tags)
+        s1.add("alice");  // tag: 0
+        s2.add("alice");  // tag: 0 (different replica)
+
+        // s1 removes "alice" (only removes its own tag)
+        s1.remove(&"alice");
+
+        // Merge
+        s1.merge(&s2);
+        s2.merge(&s1);
+
+        // Add wins: alice is still in the set
+        assert!(s1.contains(&"alice"));
+        assert!(s2.contains(&"alice"));
+        assert_eq!(s1, s2);
+    }
+
+    #[test]
+    fn test_orset_remove_then_add() {
+        let mut s1 = ORSet::new();
+        let mut s2 = ORSet::new();
+
+        // s1: add then remove
+        s1.add("alice");
+        s1.remove(&"alice");
+
+        // s2: add after s1's remove (concurrent)
+        s2.add("alice");
+
+        // Merge
+        s1.merge(&s2);
+        s2.merge(&s1);
+
+        // alice should be in the set (add wins)
+        assert!(s1.contains(&"alice"));
+        assert!(s2.contains(&"alice"));
+    }
+
+    #[test]
+    fn test_orset_multiple_adds_same_element() {
+        let mut set = ORSet::new();
+        
+        set.add("alice");
+        set.add("alice");  // Add again
+        set.add("alice");  // And again
+
+        // Should have 3 different tags for alice
+        let alice_tags: Vec<_> = set.elements
+            .iter()
+            .filter(|(e, _)| e == &"alice")
+            .collect();
+        
+        assert_eq!(alice_tags.len(), 3);
+        
+        // But contains returns true (obviously)
+        assert!(set.contains(&"alice"));
+        
+        // And len counts unique elements
+        assert_eq!(set.len(), 1);
+    }
+
+    #[test]
+    fn test_orset_convergence() {
+        let mut s1 = ORSet::new();
+        let mut s2 = ORSet::new();
+
+        // Complex scenario
+        s1.add("alice");
+        s1.add("bob");
+        
+        s2.add("bob");
+        s2.add("charlie");
+        
+        s1.remove(&"bob");  // s1 removes bob
+        
+        s2.add("bob");  // s2 adds bob again (concurrent)
+
+        // Merge both ways
+        s1.merge(&s2);
+        s2.merge(&s1);
+
+        // Should converge
+        assert_eq!(s1, s2);
+        
+        // alice: in s1 only
+        assert!(s1.contains(&"alice"));
+        
+        // bob: should be present (concurrent add wins)
+        assert!(s1.contains(&"bob"));
+        
+        // charlie: in s2 only
+        assert!(s1.contains(&"charlie"));
+    }
+
+    #[test]
+    fn test_orset_idempotence() {
+        let mut s1 = ORSet::new();
+        s1.add("alice");
+        s1.add("bob");
+
+        let s2 = s1.clone();
+
+        s1.merge(&s2);
+        s1.merge(&s2);
+        s1.merge(&s2);
+
+        // Multiple merges should have no effect
+        assert_eq!(s1.len(), 2);
+        assert!(s1.contains(&"alice"));
+        assert!(s1.contains(&"bob"));
     }
 }
