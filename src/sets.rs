@@ -3,9 +3,9 @@
 //! This module implements various Set CRDTs with different semantics
 //! for handling concurrent add/remove operations.
 
-use std::{collections::HashSet, sync::mpsc::SendError};
+use std::{collections::HashSet};
 use std::hash::Hash;
-use crate::core::{ActorID, Crdt};
+use crate::core::{Crdt};
 
 /// G-Set: Grow-only Set
 ///
@@ -224,6 +224,106 @@ impl<T:Clone+Eq+Hash> Crdt for ORSet<T>{
     }
 }
 
+/// LWW-Set: Last-Write-Wins Element Set
+///
+/// Uses timestamps to resolve conflicts. The operation with the
+/// highest timestamp wins.
+///
+/// **Key properties:**
+/// - Elements can be added and removed multiple times
+/// - Concurrent add/remove: **Highest timestamp wins**
+/// - Requires synchronized clocks (or Lamport timestamps)
+///
+/// **Comparison with OR-Set:**
+/// - OR-Set: Add always wins (uses unique tags)
+/// - LWW-Set: Latest timestamp wins (uses timestamps)
+///
+/// **Use cases:** Replicated databases, configuration management,
+/// any scenario where "last edit wins" is desired.
+#[derive(Clone,Debug)]
+pub struct LWWSet<T:Clone+Eq+Hash>{
+    added: HashSet<(T,u64)>,
+    removed: HashSet<(T,u64)>,
+    clock:u64  //lamport clock
+}
+
+impl<T:Clone+Eq+Hash> PartialEq for LWWSet<T>{
+    fn eq(&self, other: &Self) -> bool {
+        self.added == other.added && self.removed == other.removed
+    }
+}
+
+impl<T:Clone+Eq+Hash> Eq for LWWSet<T>{}
+
+impl<T:Clone+Eq+Hash> LWWSet<T>{
+    pub fn new()->Self{
+        LWWSet { added: HashSet::new(), removed: HashSet::new(), clock: 0 }
+    }
+    pub fn add(&mut self,element:T){
+        let timestamp = self.tick();
+        self.added.insert((element,timestamp));
+    }
+
+    pub fn remove(&mut self,element:T){
+        let timestamp = self.tick();
+        self.removed.insert((element,timestamp));
+    }
+
+    pub fn contains(&self,element:&T)->bool{
+        let max_added = self.added.iter().filter(|(e,_)| e == element)
+        .map(|(_,t)| t).max();
+        let max_removed = self.removed.iter()
+        .filter(|(e, _)| e == element)
+        .map(|(_, t)| t)
+        .max();
+        
+        match (max_added,max_removed) {
+            (Some(t_add), Some(t_rem)) => t_add > t_rem,  // Latest wins
+            (Some(_), None) => true,                       // Only added
+            (None, Some(_)) => false,                      // Only removed
+            (None, None) => false,                         // Never seen
+        }
+    }
+
+    pub fn elements(&self)->Vec<T>{
+        let mut unique: HashSet<T> = HashSet::new();
+
+        for(element,_) in &self.added{
+            unique.insert(element.clone());
+        }
+        unique.into_iter().filter(|e| self.contains(e)).collect()
+    }
+
+    pub fn len(&self)->usize{
+        self.elements().len()
+    }
+
+    pub fn is_empty(&self)->bool{
+        self.elements().is_empty()
+    }
+    fn tick(&mut self)->u64{
+        self.clock+=1;
+        self.clock
+    }
+}
+
+impl<T:Clone+Eq+Hash> Default for LWWSet<T>{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T:Clone+Eq+Hash> Crdt for LWWSet<T>{
+    fn merge(&mut self, other: &Self) {
+        for pair in &other.added{
+            self.added.insert(pair.clone());
+        }
+        for pair in &other.removed{
+            self.removed.insert(pair.clone());
+        }
+        self.clock = self.clock.max(other.clock);
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -488,6 +588,113 @@ mod or_tests {
         s1.merge(&s2);
 
         // Multiple merges should have no effect
+        assert_eq!(s1.len(), 2);
+        assert!(s1.contains(&"alice"));
+        assert!(s1.contains(&"bob"));
+    }
+}
+
+#[cfg(test)]
+mod lww_tests {
+    use super::*;
+
+    #[test]
+    fn test_lwwset_add_remove() {
+        let mut set = LWWSet::new();
+        
+        set.add("alice");
+        assert!(set.contains(&"alice"));
+        
+        set.remove("alice");
+        assert!(!set.contains(&"alice"));
+    }
+
+    #[test]
+    fn test_lwwset_last_write_wins() {
+        let mut set = LWWSet::new();
+        
+        set.add("item");     // timestamp: 1
+        set.remove("item");  // timestamp: 2 (later)
+        
+        // Remove wins (higher timestamp)
+        assert!(!set.contains(&"item"));
+        
+        set.add("item");     // timestamp: 3 (even later)
+        
+        // Add wins now (highest timestamp)
+        assert!(set.contains(&"item"));
+    }
+
+    #[test]
+    fn test_lwwset_concurrent_different_timestamps() {
+        let mut s1 = LWWSet::new();
+        let mut s2 = LWWSet::new();
+
+        s1.add("item");     // timestamp: 1
+        s2.remove("item");  // timestamp: 1 (concurrent, same clock value)
+
+        // In case of tie, we need bias rule
+        // Our implementation: add wins on tie (t_add > t_rem is false, but t_add >= t_rem)
+        // Let's test actual behavior:
+        
+        s1.merge(&s2);
+        s2.merge(&s1);
+
+        // With our implementation: max_added=1, max_removed=1
+        // contains checks: t_add > t_rem → 1 > 1 = false
+        assert!(!s1.contains(&"item"));  // Remove wins on tie
+        assert_eq!(s1, s2);
+    }
+
+    #[test]
+    fn test_lwwset_convergence() {
+        let mut s1 = LWWSet::new();
+        let mut s2 = LWWSet::new();
+
+        s1.add("alice");
+        s1.add("bob");
+        
+        s2.add("charlie");
+        s2.remove("bob");  // Higher timestamp than s1's add
+
+        s1.merge(&s2);
+        s2.merge(&s1);
+
+        assert_eq!(s1, s2);
+        assert!(s1.contains(&"alice"));
+        assert!(s1.contains(&"charlie"));
+        
+        // bob's fate depends on timestamps
+        // s2's remove has higher timestamp, so bob is removed
+        assert!(!s1.contains(&"bob"));
+    }
+
+    #[test]
+    fn test_lwwset_multiple_add_remove() {
+        let mut set = LWWSet::new();
+        
+        set.add("item");     // t=1
+        set.remove("item");  // t=2
+        set.add("item");     // t=3
+        set.remove("item");  // t=4
+        set.add("item");     // t=5
+        
+        // Latest operation (add at t=5) wins
+        assert!(set.contains(&"item"));
+    }
+
+    #[test]
+    fn test_lwwset_idempotence() {
+        let mut s1 = LWWSet::new();
+        s1.add("alice");
+        s1.add("bob");
+
+        let s2 = s1.clone();
+
+        s1.merge(&s2);
+        s1.merge(&s2);
+        s1.merge(&s2);
+
         assert_eq!(s1.len(), 2);
         assert!(s1.contains(&"alice"));
         assert!(s1.contains(&"bob"));
