@@ -104,6 +104,62 @@ This is a library crate, so the main way to exercise it is through tests:
 cargo test
 ```
 
+Useful local checks:
+
+```bash
+cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets --all-features
+```
+
+## CI Pipeline
+
+This project now includes a GitHub Actions workflow at `.github/workflows/ci.yml`.
+
+The repository also pins the Rust compiler with `rust-toolchain.toml` so local development and CI use the same toolchain version.
+
+It runs on every `push` and `pull_request` and performs three checks:
+
+- `cargo fmt --check`: verifies consistent formatting
+- `cargo clippy --all-targets --all-features -- -D warnings`: treats lint warnings as CI failures
+- `cargo test --all-targets --all-features`: runs the full test suite
+
+Why this is useful for this project:
+
+- CRDT code is correctness-heavy, so regressions should be caught early.
+- merge semantics are easy to break accidentally, so tests should run automatically on every change.
+- formatting and linting keep the codebase readable as the project grows into maps, sync, and more advanced CRDTs.
+
+## Basic CD
+
+This project now also includes a basic release workflow at `.github/workflows/release.yml`.
+
+It triggers on tags that match `v*`, for example `v0.1.0`, and it:
+
+- verifies the tagged commit is reachable from `main`
+- runs the test suite again
+- creates a GitHub release with generated release notes
+
+This is a simple form of CD because it automates a delivery step after code has already passed CI.
+
+## GitHub Setup
+
+Recommended branch protection for `main`:
+
+- require a pull request before merging
+- require passing status checks before merging
+- require branches to be up to date before merging
+
+Recommended required checks:
+
+- `Format Check`
+- `Clippy`
+- `Test Suite`
+
+The local branch in this repository is currently `master`. If you want the release workflow and branch protection setup to work exactly as documented, rename the default branch to `main` on GitHub or adjust the workflow to use `master`.
+
+More contributor and release guidance is in `CONTRIBUTING.md`.
+
 ## Example Usage
 
 ### Grow-only Counter
@@ -178,7 +234,7 @@ This part matters in interviews because it shows engineering judgment and makes 
 - `LWWSet` uses a simple logical clock but does not model full causality or clock skew concerns.
 - `RGA` is a simplified sequence CRDT and does not implement the full metadata and ordering machinery you would want for a production text editor.
 - Map CRDTs are not implemented yet.
-- There is no benchmarking, property-based testing, fuzz testing, or CI setup yet.
+- There is no benchmarking, property-based testing, fuzz testing, docs deployment, or crate publishing yet.
 
 ## Roadmap
 

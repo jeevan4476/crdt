@@ -3,7 +3,7 @@
 pub type ActorID = u64;
 
 /// CRDT trait
-/// 
+///
 /// Every CRDT must:
 /// - Be Clone (for merging)
 /// - Be PartialEq (for convergence testing)
