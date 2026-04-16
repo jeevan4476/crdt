@@ -273,7 +273,7 @@ mod tests {
         map.remove(&"key".to_string());
 
         assert!(!map.contains_key(&"key".to_string()));
-        assert!(map.tombstones.contains(&"key".to_string()));
+        assert!(map.tombstones.contains("key"));
     }
 
     #[test]

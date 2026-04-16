@@ -274,7 +274,7 @@ impl<T: Clone + Eq + Hash> ORSet<T> {
             self.removed.remove(&element);
             
             // If the element has no active tags either, completely purge it from memory
-            if self.added.get(&element).map_or(true, |tags| tags.is_empty()) {
+            if self.added.get(&element).is_none_or(|tags| tags.is_empty()) {
                 self.added.remove(&element);
             }
         }
@@ -312,7 +312,7 @@ impl<T: Clone + Eq + Hash> Crdt for ORSet<T> {
 /// **Comparison with OR-Set:**
 /// - OR-Set: Add always wins (uses unique tags)
 /// - LWW-Set: Latest timestamp wins (uses timestamps)
-/// Algebraic payload representing minimal operations for LWW distribution protocol
+///   Algebraic payload representing minimal operations for LWW distribution protocol
 #[derive(Clone, Debug, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub enum LWWSetDelta<T: Clone + Eq + Hash> {
     Add(T, (u64, crate::core::ActorID)),
