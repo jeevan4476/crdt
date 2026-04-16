@@ -258,6 +258,27 @@ impl<T: Clone + Eq + Hash> ORSet<T> {
         self.next_uid += 1;
         (self.actor, uid)
     }
+
+    /// Garbage Collection: Prunes tombstones definitively known to be observed by all active replicas globally.
+    pub fn prune(&mut self, watermark: u64) {
+        let mut empty_elements = Vec::new();
+
+        for (element, tags) in self.removed.iter_mut() {
+            tags.retain(|tag| tag.1 > watermark);
+            if tags.is_empty() {
+                empty_elements.push(element.clone());
+            }
+        }
+
+        for element in empty_elements {
+            self.removed.remove(&element);
+            
+            // If the element has no active tags either, completely purge it from memory
+            if self.added.get(&element).map_or(true, |tags| tags.is_empty()) {
+                self.added.remove(&element);
+            }
+        }
+    }
 }
 
 impl<T: Clone + Eq + Hash> Crdt for ORSet<T> {
@@ -387,6 +408,29 @@ impl<T: Clone + Eq + Hash> LWWSet<T> {
     fn tick(&mut self) -> (u64, crate::core::ActorID) {
         self.clock += 1;
         (self.clock, self.actor)
+    }
+
+    /// Garbage Collection: Safely purge local entries universally acknowledged as tombstones.
+    pub fn prune(&mut self, watermark: u64) {
+        let mut purged = Vec::new();
+        for (element, &t_rem) in &self.removed {
+            // Unanimously agreed to have been executed
+            if t_rem.0 <= watermark {
+                if let Some(&t_add) = self.added.get(element) {
+                    if t_rem >= t_add {
+                        // Tombstone overrides the addition completely
+                        purged.push(element.clone());
+                    }
+                } else {
+                    // Exists only in removed
+                    purged.push(element.clone());
+                }
+            }
+        }
+        for element in purged {
+            self.removed.remove(&element);
+            self.added.remove(&element);
+        }
     }
 }
 

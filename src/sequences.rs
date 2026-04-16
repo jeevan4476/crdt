@@ -185,6 +185,11 @@ impl<T: Clone + PartialEq> RGA<T> {
         }
         None
     }
+
+    /// Causal Garbage Collection: Cleanly purges tombstones mathematically guaranteed to be obsolete universally.
+    pub fn prune(&mut self, watermark: u64) {
+        self.vertices.retain(|v| !v.removed || v.timestamp.clock > watermark);
+    }
 }
 
 impl fmt::Display for RGA<char> {
