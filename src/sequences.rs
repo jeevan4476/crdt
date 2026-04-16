@@ -28,29 +28,18 @@ impl Timestamp {
     }
 }
 
-/// A vertex in the RGA linked list
 #[derive(Clone, Debug, PartialEq)]
 struct Vertex<T: Clone> {
     value: T,
     timestamp: Timestamp,
-    removed: bool, // Tombstone flag
+    parent: Option<Timestamp>,
+    removed: bool,
 }
 
 /// RGA: Replicated Growable Array
 ///
 /// A CRDT sequence designed for collaborative text editing.
 /// Supports concurrent insert and delete operations that converge.
-///
-/// **How it works:**
-/// - Each element has a unique timestamp (Lamport clock + actor ID)
-/// - Elements stored as linked list ordered by insertion time
-/// - Concurrent inserts at same position ordered by timestamp
-/// - Delete marks element as tombstone (doesn't remove physically)
-///
-/// **Use cases:**
-/// - Collaborative text editors (Google Docs style)
-/// - Shared todo lists
-/// - Any mutable sequence with concurrent edits
 #[derive(Clone, Debug)]
 pub struct RGA<T: Clone + PartialEq> {
     actor: ActorID,
@@ -60,7 +49,6 @@ pub struct RGA<T: Clone + PartialEq> {
 
 impl<T: Clone + PartialEq> PartialEq for RGA<T> {
     fn eq(&self, other: &Self) -> bool {
-        // Two RGAs are equal if they have the same visible sequence
         self.value() == other.value()
     }
 }
@@ -84,26 +72,24 @@ impl<T: Clone + PartialEq> RGA<T> {
             self.visible_position_to_index(position - 1)
         };
 
+        let parent = after_idx.map(|idx| self.vertices[idx].timestamp.clone());
+
         let new_vertex = Vertex {
             value,
             timestamp: timestamp.clone(),
+            parent,
             removed: false,
         };
 
-        let insert_idx = match after_idx {
-            None => self
-                .vertices
-                .iter()
-                .position(|v| v.timestamp < timestamp)
-                .unwrap_or(self.vertices.len()),
-            Some(after) => {
-                let mut idx = after + 1;
-                while idx < self.vertices.len() && self.vertices[idx].timestamp > timestamp {
-                    idx += 1;
-                }
-                idx
-            }
+        let mut insert_idx = match after_idx {
+            None => 0,
+            Some(after) => after + 1,
         };
+
+        // Skip right as long as concurrent nodes have a higher timestamp (RGA rule)
+        while insert_idx < self.vertices.len() && self.vertices[insert_idx].timestamp > timestamp {
+            insert_idx += 1;
+        }
         self.vertices.insert(insert_idx, new_vertex);
     }
 
@@ -113,12 +99,15 @@ impl<T: Clone + PartialEq> RGA<T> {
             self.vertices[idx].removed = true;
         }
     }
+
     pub fn len(&self) -> usize {
         self.vertices.iter().filter(|v| !v.removed).count()
     }
+
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
     pub fn value(&self) -> Vec<T> {
         self.vertices
             .iter()
@@ -131,6 +120,7 @@ impl<T: Clone + PartialEq> RGA<T> {
         self.clock += 1;
         Timestamp::new(self.clock, self.actor)
     }
+
     fn visible_position_to_index(&self, position: usize) -> Option<usize> {
         let mut visible_count = 0;
         for (idx, vertex) in self.vertices.iter().enumerate() {
@@ -156,34 +146,42 @@ impl fmt::Display for RGA<char> {
 
 impl<T: Clone + PartialEq> Crdt for RGA<T> {
     fn merge(&mut self, other: &Self) {
-        let mut merged = Vec::new();
-        let mut i = 0;
-        let mut j = 0;
+        let mut to_insert = Vec::new();
 
-        while i < self.vertices.len() && j < other.vertices.len() {
-            if self.vertices[i].timestamp > other.vertices[j].timestamp {
-                merged.push(self.vertices[i].clone());
-                i += 1;
-            } else if self.vertices[i].timestamp < other.vertices[j].timestamp {
-                merged.push(other.vertices[j].clone());
-                j += 1;
+        // 1. Mark tombstones and find incoming new nodes
+        for v_other in &other.vertices {
+            if let Some(v_self) = self
+                .vertices
+                .iter_mut()
+                .find(|x| x.timestamp == v_other.timestamp)
+            {
+                v_self.removed |= v_other.removed;
             } else {
-                let mut vertex = self.vertices[i].clone();
-                vertex.removed = vertex.removed || other.vertices[j].removed;
-                merged.push(vertex);
-                i += 1;
-                j += 1;
+                to_insert.push(v_other.clone());
             }
         }
-        while i < self.vertices.len() {
-            merged.push(self.vertices[i].clone());
-            i += 1;
+
+        // 2. Insert new nodes respecting structural hierarchy strictly
+        // Since `other.vertices` is a topological tree trace internally, `to_insert` is safely ordered topologically.
+        for v in to_insert {
+            let mut idx = match &v.parent {
+                Some(p_ts) => {
+                    if let Some(pos) = self.vertices.iter().position(|x| x.timestamp == *p_ts) {
+                        pos + 1
+                    } else {
+                        continue; // Parent somehow missing despite sync topology
+                    }
+                }
+                None => 0,
+            };
+
+            // Descend branches adhering to standard descending RGA sibling timestamps
+            while idx < self.vertices.len() && self.vertices[idx].timestamp > v.timestamp {
+                idx += 1;
+            }
+            self.vertices.insert(idx, v);
         }
-        while j < other.vertices.len() {
-            merged.push(other.vertices[j].clone());
-            j += 1;
-        }
-        self.vertices = merged.clone();
+
         self.clock = self.clock.max(other.clock);
     }
 }
