@@ -31,11 +31,21 @@ impl Timestamp {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
-struct Vertex<T: Clone> {
+pub struct Vertex<T: Clone> {
     value: T,
     timestamp: Timestamp,
     parent: Option<Timestamp>,
     removed: bool,
+}
+
+/// Delta-State algebraic payloads for RGA topological tracking
+#[derive(Clone, Debug, Serialize, Deserialize, SchemaWrite, SchemaRead)]
+pub enum RGADelta<T: Clone + PartialEq> {
+    Insert {
+        position: usize,
+        vertex: Vertex<T>,
+    },
+    Remove(Timestamp),
 }
 
 /// RGA: Replicated Growable Array
@@ -65,7 +75,7 @@ impl<T: Clone + PartialEq> RGA<T> {
         }
     }
 
-    pub fn insert(&mut self, position: usize, value: T) {
+    pub fn insert(&mut self, position: usize, value: T) -> RGADelta<T> {
         let timestamp = self.tick();
 
         let after_idx = if position == 0 {
@@ -92,13 +102,53 @@ impl<T: Clone + PartialEq> RGA<T> {
         while insert_idx < self.vertices.len() && self.vertices[insert_idx].timestamp > timestamp {
             insert_idx += 1;
         }
-        self.vertices.insert(insert_idx, new_vertex);
+        self.vertices.insert(insert_idx, new_vertex.clone());
+
+        RGADelta::Insert {
+            position: insert_idx,
+            vertex: new_vertex,
+        }
     }
 
     //mark the element as tombstone rather than physically removing it
-    pub fn remove(&mut self, position: usize) {
+    pub fn remove(&mut self, position: usize) -> Option<RGADelta<T>> {
         if let Some(idx) = self.visible_position_to_index(position) {
             self.vertices[idx].removed = true;
+            return Some(RGADelta::Remove(self.vertices[idx].timestamp.clone()));
+        }
+        None
+    }
+
+    pub fn apply_delta(&mut self, delta: RGADelta<T>) {
+        match delta {
+            RGADelta::Insert { vertex, .. } => {
+                let mut idx = match &vertex.parent {
+                    Some(p_ts) => {
+                        if let Some(pos) = self.vertices.iter().position(|x| x.timestamp == *p_ts) {
+                            pos + 1
+                        } else {
+                            return; // Parent missing, ignore for strict topology integrity
+                        }
+                    }
+                    None => 0,
+                };
+
+                while idx < self.vertices.len() && self.vertices[idx].timestamp > vertex.timestamp {
+                    idx += 1;
+                }
+                
+                // prevent duplicates
+                if idx < self.vertices.len() && self.vertices[idx].timestamp == vertex.timestamp {
+                    self.vertices[idx].removed |= vertex.removed;
+                    return;
+                }
+                self.vertices.insert(idx, vertex);
+            }
+            RGADelta::Remove(timestamp) => {
+                if let Some(v_self) = self.vertices.iter_mut().find(|x| x.timestamp == timestamp) {
+                    v_self.removed = true;
+                }
+            }
         }
     }
 

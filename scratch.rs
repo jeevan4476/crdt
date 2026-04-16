@@ -9,7 +9,6 @@ fn main() {
     let des: Test = bincode::deserialize(&ser).unwrap();
     assert_eq!(t, des);
 
-    // Let's try wincode
     let w_ser = wincode::serialize(&t).unwrap();
     let w_des: Test = wincode::deserialize(&w_ser).unwrap();
     assert_eq!(t, w_des);

@@ -152,6 +152,13 @@ impl<T: Clone + Eq + Hash> Crdt for TwoPSet<T> {
 /// - Uses unique tags to track individual add operations
 ///
 /// **How it works:**
+/// Algebraic network payloads for localized ORSet synchronization over absolute state merging.
+#[derive(Clone, Debug, Serialize, Deserialize, SchemaWrite, SchemaRead)]
+pub enum ORSetDelta<T: Clone + Eq + Hash> {
+    Add(T, (crate::core::ActorID, u64)),
+    Remove(T, HashSet<(crate::core::ActorID, u64)>),
+}
+
 /// - Each `add(e)` creates a unique (element, tag) pair
 /// - `remove(e)` removes only the tags observed at source
 /// - Concurrent add creates new tag not observed by remove
@@ -181,16 +188,39 @@ impl<T: Clone + Eq + Hash> ORSet<T> {
         }
     }
 
-    pub fn add(&mut self, element: T) {
+    pub fn add(&mut self, element: T) -> ORSetDelta<T> {
         let tag = self.generate_tag();
-        self.added.entry(element).or_default().insert(tag);
+        self.added.entry(element.clone()).or_default().insert(tag);
+        ORSetDelta::Add(element, tag)
     }
 
-    pub fn remove(&mut self, element: &T) {
+    pub fn remove(&mut self, element: &T) -> Option<ORSetDelta<T>> {
         if let Some(active_tags) = self.added.get(element) {
+            let mut removed_tags = std::collections::HashSet::new();
             let removed_for_element = self.removed.entry(element.clone()).or_default();
             for tag in active_tags {
-                removed_for_element.insert(*tag);
+                if !removed_for_element.contains(tag) {
+                    removed_for_element.insert(*tag);
+                    removed_tags.insert(*tag);
+                }
+            }
+            if !removed_tags.is_empty() {
+                return Some(ORSetDelta::Remove(element.clone(), removed_tags));
+            }
+        }
+        None
+    }
+
+    pub fn apply_delta(&mut self, delta: ORSetDelta<T>) {
+        match delta {
+            ORSetDelta::Add(element, tag) => {
+                self.added.entry(element).or_default().insert(tag);
+            }
+            ORSetDelta::Remove(element, tags) => {
+                let entry = self.removed.entry(element).or_default();
+                for tag in tags {
+                    entry.insert(tag);
+                }
             }
         }
     }
@@ -261,6 +291,13 @@ impl<T: Clone + Eq + Hash> Crdt for ORSet<T> {
 /// **Comparison with OR-Set:**
 /// - OR-Set: Add always wins (uses unique tags)
 /// - LWW-Set: Latest timestamp wins (uses timestamps)
+/// Algebraic payload representing minimal operations for LWW distribution protocol
+#[derive(Clone, Debug, Serialize, Deserialize, SchemaWrite, SchemaRead)]
+pub enum LWWSetDelta<T: Clone + Eq + Hash> {
+    Add(T, (u64, crate::core::ActorID)),
+    Remove(T, (u64, crate::core::ActorID)),
+}
+
 ///
 /// **Use cases:** Replicated databases, configuration management,
 /// any scenario where "last edit wins" is desired.
@@ -290,14 +327,33 @@ impl<T: Clone + Eq + Hash> LWWSet<T> {
         }
     }
 
-    pub fn add(&mut self, element: T) {
+    pub fn add(&mut self, element: T) -> LWWSetDelta<T> {
         let timestamp = self.tick();
-        self.added.insert(element, timestamp);
+        self.added.insert(element.clone(), timestamp);
+        LWWSetDelta::Add(element, timestamp)
     }
 
-    pub fn remove(&mut self, element: T) {
+    pub fn remove(&mut self, element: T) -> LWWSetDelta<T> {
         let timestamp = self.tick();
-        self.removed.insert(element, timestamp);
+        self.removed.insert(element.clone(), timestamp);
+        LWWSetDelta::Remove(element, timestamp)
+    }
+
+    pub fn apply_delta(&mut self, delta: LWWSetDelta<T>) {
+        match delta {
+            LWWSetDelta::Add(element, timestamp) => {
+                let entry = self.added.entry(element).or_insert(timestamp);
+                if timestamp > *entry {
+                    *entry = timestamp;
+                }
+            }
+            LWWSetDelta::Remove(element, timestamp) => {
+                let entry = self.removed.entry(element).or_insert(timestamp);
+                if timestamp > *entry {
+                    *entry = timestamp;
+                }
+            }
+        }
     }
 
     pub fn contains(&self, element: &T) -> bool {
