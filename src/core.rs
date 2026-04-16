@@ -8,6 +8,7 @@ pub type ActorID = u64;
 /// - Be Clone (for merging)
 /// - Be PartialEq (for convergence testing)
 /// - Implement merge() with semilattice properties
+/// - Be Serialize and Deserialize (for network broadcasting)
 pub trait Crdt: Clone + PartialEq {
     fn merge(&mut self, other: &Self);
 }

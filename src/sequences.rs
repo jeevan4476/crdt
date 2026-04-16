@@ -5,9 +5,11 @@
 
 use crate::core::{ActorID, Crdt};
 use std::fmt;
+use serde::{Deserialize, Serialize};
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Unique identifier for each element in the sequence
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct Timestamp {
     pub clock: u64,
     pub actor: ActorID,
@@ -28,7 +30,7 @@ impl Timestamp {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 struct Vertex<T: Clone> {
     value: T,
     timestamp: Timestamp,
@@ -40,7 +42,7 @@ struct Vertex<T: Clone> {
 ///
 /// A CRDT sequence designed for collaborative text editing.
 /// Supports concurrent insert and delete operations that converge.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct RGA<T: Clone + PartialEq> {
     actor: ActorID,
     clock: u64,

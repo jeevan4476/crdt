@@ -6,12 +6,14 @@
 use crate::core::Crdt;
 use std::collections::HashSet;
 use std::hash::Hash;
+use serde::{Deserialize, Serialize};
+use wincode::{SchemaRead, SchemaWrite};
 
 /// G-Set: Grow-only Set
 ///
 /// The simplest Set CRDT. Elements can only be added, never removed.
 /// Perfect for: vote counting, "like" buttons, permanent membership lists.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct GSet<T: Clone + Eq + Hash> {
     elements: HashSet<T>,
 }
@@ -74,7 +76,7 @@ impl<T: Clone + Eq + Hash> Crdt for GSet<T> {
 /// An element is in the set if: added - removed
 ///
 /// **Concurrent add/remove:** Remove wins
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct TwoPSet<T: Clone + Eq + Hash> {
     added: HashSet<T>,
     removed: HashSet<T>,
@@ -153,7 +155,7 @@ impl<T: Clone + Eq + Hash> Crdt for TwoPSet<T> {
 /// - Each `add(e)` creates a unique (element, tag) pair
 /// - `remove(e)` removes only the tags observed at source
 /// - Concurrent add creates new tag not observed by remove
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct ORSet<T: Clone + Eq + Hash> {
     actor: crate::core::ActorID,
     added: std::collections::HashMap<T, HashSet<(crate::core::ActorID, u64)>>,
@@ -262,7 +264,7 @@ impl<T: Clone + Eq + Hash> Crdt for ORSet<T> {
 ///
 /// **Use cases:** Replicated databases, configuration management,
 /// any scenario where "last edit wins" is desired.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct LWWSet<T: Clone + Eq + Hash> {
     actor: crate::core::ActorID,
     added: std::collections::HashMap<T, (u64, crate::core::ActorID)>,

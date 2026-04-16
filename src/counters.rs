@@ -1,10 +1,12 @@
 //! Counter CRDTs
 
 use crate::core::{ActorID, Crdt};
+use serde::{Deserialize, Serialize};
+use wincode::{SchemaRead, SchemaWrite};
 use std::collections::HashMap;
 
 /// G-Counter: Grow-only counter
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct GCounter {
     actor: ActorID,
     counts: HashMap<ActorID, u64>,
@@ -46,7 +48,7 @@ impl Crdt for GCounter {
 }
 
 /// PN-Counter: Positive-Negative Counter
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct PNCounter {
     increments: GCounter,
     decrements: GCounter,
