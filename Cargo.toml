@@ -1,5 +1,5 @@
 [package]
-name = "crdt"
+name = "rs-crdt"
 version = "0.1.0"
 edition = "2024"
 description = "A production-grade Rust library implementing Conflict-Free Replicated Data Types (CRDTs), WAL persistence, gossip networking, selective undo, and Peritext rich text formatting."
