@@ -112,15 +112,9 @@ impl VectorClock {
     /// AND another actor where `other > self`. This is the distributed "parallel
     /// edit" condition that triggers CRDT merge semantics.
     pub fn concurrent(&self, other: &Self) -> bool {
-        let self_ahead = self
-            .clock
-            .iter()
-            .any(|(&actor, &ts)| ts > other.get(actor));
+        let self_ahead = self.clock.iter().any(|(&actor, &ts)| ts > other.get(actor));
 
-        let other_ahead = other
-            .clock
-            .iter()
-            .any(|(&actor, &ts)| ts > self.get(actor));
+        let other_ahead = other.clock.iter().any(|(&actor, &ts)| ts > self.get(actor));
 
         self_ahead && other_ahead
     }
@@ -172,7 +166,7 @@ impl VectorClock {
     }
 }
 
-//  Tests 
+//  Tests
 
 #[cfg(test)]
 mod tests {
@@ -233,10 +227,13 @@ mod tests {
     #[test]
     fn test_vclock_merge_is_commutative() {
         let mut a = VectorClock::new();
-        a.tick(1); a.tick(1);
+        a.tick(1);
+        a.tick(1);
 
         let mut b = VectorClock::new();
-        b.tick(2); b.tick(2); b.tick(2);
+        b.tick(2);
+        b.tick(2);
+        b.tick(2);
 
         let mut ab = a.clone();
         ab.merge(&b);
@@ -250,7 +247,8 @@ mod tests {
     #[test]
     fn test_vclock_merge_is_idempotent() {
         let mut a = VectorClock::new();
-        a.tick(1); a.tick(2);
+        a.tick(1);
+        a.tick(2);
 
         let copy = a.clone();
         a.merge(&copy);
@@ -285,7 +283,10 @@ mod tests {
         let mut bob = VectorClock::new();
         bob.tick(2); // Bob advanced independently
 
-        assert!(alice.concurrent(&bob), "independent edits must be concurrent");
+        assert!(
+            alice.concurrent(&bob),
+            "independent edits must be concurrent"
+        );
         assert!(bob.concurrent(&alice), "concurrent must be symmetric");
         assert!(!alice.dominates(&bob));
         assert!(!bob.dominates(&alice));
@@ -295,7 +296,8 @@ mod tests {
     #[test]
     fn test_vclock_equal_clocks() {
         let mut a = VectorClock::new();
-        a.tick(1); a.tick(2);
+        a.tick(1);
+        a.tick(2);
 
         let b = a.clone();
 
@@ -309,18 +311,30 @@ mod tests {
     fn test_vclock_watermark_three_nodes() {
         // Node A has seen: actor1=5, actor2=3
         let mut node_a = VectorClock::new();
-        for _ in 0..5 { node_a.tick(1); }
-        for _ in 0..3 { node_a.tick(2); }
+        for _ in 0..5 {
+            node_a.tick(1);
+        }
+        for _ in 0..3 {
+            node_a.tick(2);
+        }
 
         // Node B has seen: actor1=4, actor2=3
         let mut node_b = VectorClock::new();
-        for _ in 0..4 { node_b.tick(1); }
-        for _ in 0..3 { node_b.tick(2); }
+        for _ in 0..4 {
+            node_b.tick(1);
+        }
+        for _ in 0..3 {
+            node_b.tick(2);
+        }
 
         // Node C has seen: actor1=5, actor2=2
         let mut node_c = VectorClock::new();
-        for _ in 0..5 { node_c.tick(1); }
-        for _ in 0..2 { node_c.tick(2); }
+        for _ in 0..5 {
+            node_c.tick(1);
+        }
+        for _ in 0..2 {
+            node_c.tick(2);
+        }
 
         // Watermark from A's perspective with [B, C] as peers:
         // actor1: min(5, 4, 5) = 4
@@ -349,10 +363,14 @@ mod tests {
         rga.remove(0); // 'H' tombstoned at clock tick ~1
 
         let mut node_a = VectorClock::new();
-        node_a.tick(1); node_a.tick(1); node_a.tick(1); // clock=3
+        node_a.tick(1);
+        node_a.tick(1);
+        node_a.tick(1); // clock=3
 
         let mut node_b = VectorClock::new();
-        node_b.tick(1); node_b.tick(1); node_b.tick(1); // clock=3 (seen same)
+        node_b.tick(1);
+        node_b.tick(1);
+        node_b.tick(1); // clock=3 (seen same)
 
         let wm = node_a.watermark(&[node_b]);
         // watermark=3 → tombstone at clock 1 is safe to GC

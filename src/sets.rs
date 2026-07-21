@@ -3,10 +3,10 @@
 //! This module implements various Set CRDTs with different semantics
 //! for handling concurrent add/remove operations.
 
-use crate::core::Crdt;
+use crate::core::{ApplyDelta, Crdt};
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::hash::Hash;
-use serde::{Deserialize, Serialize};
 use wincode::{SchemaRead, SchemaWrite};
 
 /// G-Set: Grow-only Set
@@ -272,7 +272,7 @@ impl<T: Clone + Eq + Hash> ORSet<T> {
 
         for element in empty_elements {
             self.removed.remove(&element);
-            
+
             // If the element has no active tags either, completely purge it from memory
             if self.added.get(&element).is_none_or(|tags| tags.is_empty()) {
                 self.added.remove(&element);
@@ -296,6 +296,12 @@ impl<T: Clone + Eq + Hash> Crdt for ORSet<T> {
                 .extend(other_tags.iter().cloned());
         }
         self.next_uid = self.next_uid.max(other.next_uid);
+    }
+}
+
+impl<T: Clone + Eq + Hash> ApplyDelta<ORSetDelta<T>> for ORSet<T> {
+    fn apply_delta(&mut self, delta: ORSetDelta<T>) {
+        ORSet::apply_delta(self, delta);
     }
 }
 
@@ -451,6 +457,13 @@ impl<T: Clone + Eq + Hash> Crdt for LWWSet<T> {
         self.clock = self.clock.max(other.clock);
     }
 }
+
+impl<T: Clone + Eq + Hash> ApplyDelta<LWWSetDelta<T>> for LWWSet<T> {
+    fn apply_delta(&mut self, delta: LWWSetDelta<T>) {
+        LWWSet::apply_delta(self, delta);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -2,8 +2,8 @@
 
 use crate::core::{ActorID, Crdt};
 use serde::{Deserialize, Serialize};
-use wincode::{SchemaRead, SchemaWrite};
 use std::collections::HashMap;
+use wincode::{SchemaRead, SchemaWrite};
 
 /// G-Counter: Grow-only counter
 #[derive(Clone, Debug, Serialize, Deserialize, SchemaWrite, SchemaRead)]

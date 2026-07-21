@@ -15,6 +15,10 @@ A production-grade Rust library implementing **Conflict-Free Replicated Data Typ
 | `sequences` | `RGA` | Topological parent-aware merge, tombstone GC |
 | `maps` | `ORMap` | Nested heterogeneous CRDT document, Update-Wins |
 | `clocks` | `VectorClock` | Causal ordering, concurrency detection, auto-prune watermark |
+| `storage` | `Wal`, `WalRecord` | Durable crash recovery with Write-Ahead Log & Snapshots |
+| `network` | `Node`, `NetworkMesh`, `GossipMessage` | P2P node abstraction & gossip anti-entropy reconciliation |
+| `undo` | `IntentionLog`, `Operation` | Per-actor intention-preserving selective undo/redo |
+| `richtext` | `RichText`, `SpanMark`, `FormatValue` | Peritext-style format spans anchored to character timestamps |
 
 All types implement `serde` (`Serialize` / `Deserialize`) and `wincode` (`SchemaWrite` / `SchemaRead`) for binary network transport. Every mutable operation returns a typed **Delta** enabling operation-based sync without shipping full state.
 
@@ -63,6 +67,20 @@ doc_a.insert("score".to_string(), ORMapValue::Counter(score));
 
 doc_b.merge(&doc_a); // converges
 assert!(doc_b.contains_key(&"score".to_string()));
+```
+
+```rust
+use crdt::{Node, NetworkMesh, ORSet};
+
+// P2P Gossip Dissemination
+let mut mesh = NetworkMesh::<ORSet<String>, _>::new();
+mesh.add_node(Node::new(1, ORSet::new(1)));
+mesh.add_node(Node::new(2, ORSet::new(2)));
+mesh.fully_connect();
+
+let delta = mesh.get_node_mut(1).unwrap().state_mut().add("data".to_string());
+mesh.broadcast_delta(1, delta);
+assert!(mesh.get_node(2).unwrap().state().contains(&"data".to_string()));
 ```
 
 ---
@@ -145,10 +163,10 @@ The compiler version is pinned via `rust-toolchain.toml` — CI and local builds
 - [x] `serde` + `wincode` serialization
 - [x] `ORMap` — nested heterogeneous document CRDT
 - [x] `VectorClock` — causal ordering + auto-prune watermark
-- [ ] Persistent storage — WAL + snapshot (crash recovery)
-- [ ] Network transport — `Node` abstraction + gossip protocol
-- [ ] Collaborative undo/redo — per-actor intention log on RGA
-- [ ] Rich text formatting — Peritext-style format spans on RGA
+- [x] Persistent storage — WAL + snapshot (crash recovery)
+- [x] Network transport — `Node` abstraction + gossip protocol
+- [x] Collaborative undo/redo — per-actor intention log on RGA
+- [x] Rich text formatting — Peritext-style format spans on RGA
 
 ---
 

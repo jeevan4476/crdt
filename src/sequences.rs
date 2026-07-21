@@ -3,13 +3,25 @@
 //! Implements RGA (Replicated Growable Array) - a CRDT for maintaining
 //! a mutable sequence with insert and delete operations.
 
-use crate::core::{ActorID, Crdt};
-use std::fmt;
+use crate::core::{ActorID, ApplyDelta, Crdt};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Unique identifier for each element in the sequence
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, SchemaWrite, SchemaRead)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    SchemaWrite,
+    SchemaRead,
+)]
 pub struct Timestamp {
     pub clock: u64,
     pub actor: ActorID,
@@ -32,19 +44,31 @@ impl Timestamp {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct Vertex<T: Clone> {
-    value: T,
-    timestamp: Timestamp,
-    parent: Option<Timestamp>,
-    removed: bool,
+    pub value: T,
+    pub timestamp: Timestamp,
+    pub parent: Option<Timestamp>,
+    pub removed: bool,
+}
+
+impl<T: Clone> Vertex<T> {
+    pub fn value(&self) -> &T {
+        &self.value
+    }
+    pub fn timestamp(&self) -> &Timestamp {
+        &self.timestamp
+    }
+    pub fn parent(&self) -> Option<&Timestamp> {
+        self.parent.as_ref()
+    }
+    pub fn is_removed(&self) -> bool {
+        self.removed
+    }
 }
 
 /// Delta-State algebraic payloads for RGA topological tracking
 #[derive(Clone, Debug, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub enum RGADelta<T: Clone + PartialEq> {
-    Insert {
-        position: usize,
-        vertex: Vertex<T>,
-    },
+    Insert { position: usize, vertex: Vertex<T> },
     Remove(Timestamp),
 }
 
@@ -136,7 +160,7 @@ impl<T: Clone + PartialEq> RGA<T> {
                 while idx < self.vertices.len() && self.vertices[idx].timestamp > vertex.timestamp {
                     idx += 1;
                 }
-                
+
                 // prevent duplicates
                 if idx < self.vertices.len() && self.vertices[idx].timestamp == vertex.timestamp {
                     self.vertices[idx].removed |= vertex.removed;
@@ -168,6 +192,24 @@ impl<T: Clone + PartialEq> RGA<T> {
             .collect()
     }
 
+    pub fn get_timestamp_at(&self, position: usize) -> Option<Timestamp> {
+        self.visible_position_to_index(position)
+            .map(|idx| self.vertices[idx].timestamp.clone())
+    }
+
+    pub fn restore_vertex(&mut self, timestamp: &Timestamp) -> bool {
+        if let Some(v) = self.vertices.iter_mut().find(|v| &v.timestamp == timestamp) {
+            v.removed = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn vertices(&self) -> &[Vertex<T>] {
+        &self.vertices
+    }
+
     fn tick(&mut self) -> Timestamp {
         self.clock += 1;
         Timestamp::new(self.clock, self.actor)
@@ -188,7 +230,8 @@ impl<T: Clone + PartialEq> RGA<T> {
 
     /// Causal Garbage Collection: Cleanly purges tombstones mathematically guaranteed to be obsolete universally.
     pub fn prune(&mut self, watermark: u64) {
-        self.vertices.retain(|v| !v.removed || v.timestamp.clock > watermark);
+        self.vertices
+            .retain(|v| !v.removed || v.timestamp.clock > watermark);
     }
 }
 
@@ -240,6 +283,12 @@ impl<T: Clone + PartialEq> Crdt for RGA<T> {
         }
 
         self.clock = self.clock.max(other.clock);
+    }
+}
+
+impl<T: Clone + PartialEq> ApplyDelta<RGADelta<T>> for RGA<T> {
+    fn apply_delta(&mut self, delta: RGADelta<T>) {
+        RGA::apply_delta(self, delta);
     }
 }
 

@@ -5,13 +5,12 @@
 //!
 //! **Conflict semantics:** Update-Wins over concurrent Remove.
 
-use crate::core::{ActorID, Crdt};
+use crate::core::{ActorID, ApplyDelta, Crdt};
 use crate::counters::PNCounter;
 use crate::sequences::RGA;
 use crate::sets::{GSet, LWWSet, ORSet};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-
 
 /// The value stored in an `ORMap` entry.
 ///
@@ -93,8 +92,7 @@ pub enum ORMapDelta {
 /// - Collaborative JSON documents (like Notion, Figma, Google Docs state)
 /// - Replicated application configuration trees
 /// - Any nested/schemaless shared state between distributed nodes
-#[derive(Clone, Debug)]
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(bound = "K: Serialize + for<'de2> Deserialize<'de2>")]
 pub struct ORMap<K: Clone + Eq + std::hash::Hash> {
     actor: ActorID,
@@ -240,7 +238,17 @@ where
     }
 }
 
-//  Tests 
+impl<K> ApplyDelta<ORMapDelta> for ORMap<K>
+where
+    K: Clone + Eq + std::hash::Hash + std::fmt::Display + std::str::FromStr,
+    K::Err: std::fmt::Debug,
+{
+    fn apply_delta(&mut self, delta: ORMapDelta) {
+        ORMap::apply_delta(self, delta);
+    }
+}
+
+//  Tests
 
 #[cfg(test)]
 mod tests {
@@ -250,9 +258,13 @@ mod tests {
     fn make_counter(actor: ActorID, delta: i64) -> ORMapValue {
         let mut c = PNCounter::new(actor);
         if delta > 0 {
-            for _ in 0..delta { c.increment(); }
+            for _ in 0..delta {
+                c.increment();
+            }
         } else {
-            for _ in 0..(-delta) { c.decrement(); }
+            for _ in 0..(-delta) {
+                c.decrement();
+            }
         }
         ORMapValue::Counter(c)
     }
@@ -316,7 +328,10 @@ mod tests {
         m2.merge(&m1);
 
         // Update-Wins: "x" must still be present
-        assert!(m1.contains_key(&"x".to_string()), "Update-Wins: x must survive");
+        assert!(
+            m1.contains_key(&"x".to_string()),
+            "Update-Wins: x must survive"
+        );
         assert_eq!(m1, m2);
     }
 
