@@ -66,14 +66,14 @@ where
 
     /// Append a full CRDT state snapshot to the log.
     pub fn append_snapshot(&mut self, state: &T) -> io::Result<()> {
-        let payload = bincode::serialize(state)
+        let payload = postcard::to_allocvec(state)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
         self.write_record(RECORD_TYPE_SNAPSHOT, &payload)
     }
 
     /// Append an operational delta to the log.
     pub fn append_delta(&mut self, delta: &D) -> io::Result<()> {
-        let payload = bincode::serialize(delta)
+        let payload = postcard::to_allocvec(delta)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
         self.write_record(RECORD_TYPE_DELTA, &payload)
     }
@@ -125,13 +125,13 @@ where
 
             match type_byte[0] {
                 RECORD_TYPE_SNAPSHOT => {
-                    let snapshot: T = bincode::deserialize(&payload)
+                    let snapshot: T = postcard::from_bytes(&payload)
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
                     latest_snapshot = Some(snapshot);
                     deltas.clear(); // Snapshot supersedes previous deltas
                 }
                 RECORD_TYPE_DELTA => {
-                    let delta: D = bincode::deserialize(&payload)
+                    let delta: D = postcard::from_bytes(&payload)
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
                     deltas.push(delta);
                 }
@@ -194,13 +194,13 @@ where
 
             match type_byte[0] {
                 RECORD_TYPE_SNAPSHOT => {
-                    let snapshot: T = bincode::deserialize(&payload)
+                    let snapshot: T = postcard::from_bytes(&payload)
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
                     latest_snapshot = Some(snapshot);
                     deltas.clear();
                 }
                 RECORD_TYPE_DELTA => {
-                    let delta: D = bincode::deserialize(&payload)
+                    let delta: D = postcard::from_bytes(&payload)
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
                     deltas.push(delta);
                 }
